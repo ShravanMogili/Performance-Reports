@@ -1,0 +1,155 @@
+Caching and paging a SQL Result Set
+
+
+
+ This is an example of how to Cache Query results on the Server side
+then page though the results 
+!!!This process should be reserved for queries that normally take a long time 
+where running the base query for each page results in a unacceptable time lag between pages!!
+This is for use with Mobile devices to avoid pulling large or complex data sets
+across the connection and trying to cache them on the device then page 
+through them
+This Caches the complex query results the first pass, avoiding running the complex query
+each time you page. Once cached, you can page through the simple cached table to return 
+the results to the client one page at a time, avoiding the client side caching.
+The line count and page count of your result set are returned with each query so you can keep track
+of your position in the dataset
+Final pass, you can (and should) destroy the table after use.
+By using TempDB you avoid the orphaned table problem, if the client disconnects unexpectedly, 
+as TempDB is cleaned up each time SQL is restarted.
+
+
+
+CREATE PROCEDURE sp_PagedCachedResults
+       @pagenumber int  --Page to return
+,      @pagesize int   --number of lines to return per page
+,      @CacheTable nvarchar(50) --A Table name defined on the client side used to access the data during paging
+,      @OtherFilterParms int
+AS /****************************************************************
+This is an example of how to Cache Query results on the Server side
+then page though the results 
+
+!!!This process should be reserved for queries that normally take a long time 
+where running the base query for each page results in a unacceptable time lag between pages!!
+
+This is for use with Mobile devices to avoid pulling large or complex data sets
+across the connection and trying to cache them on the device then page 
+through them
+
+This Caches the complex query results the first pass, avoiding running the complex query
+each time you page. Once cached, you can page through the simple cached table to return 
+the results to the client one page at a time, avoiding the client side caching.
+
+The line count and page count of your result set are returned with each query so you can keep track
+of your position in the dataset
+
+Final pass, you can (and should) destroy the table after use.
+
+By using TempDB you avoid the orphaned table problem, if the client disconnects unexpectedly, 
+as TempDB is cleaned up each time SQL is restarted.
+
+Greg Ryan
+5/5/2014
+****************************************************************/
+       BEGIN
+             SET NOCOUNT ON
+             DECLARE @SQL nvarchar(max)
+             
+             IF @pagenumber = 0
+                BEGIN
+                
+                
+/************************First Generate Dataset*************************/
+--Example is simple but this could be some complex or long running query
+--Put final result in a global temp table
+                      SELECT
+                            Col1
+                        ,   Col2
+                        ,   Col3
+                        INTO
+                            ##SomeResult
+                        FROM
+                            SomeTable
+                        WHERE
+                            Col1 > @OtherFilterParms
+--Now Load Cache Table
+                      SET @SQL = 'Select * into TempDB.dbo.' + @CacheTable
+                          + ' from ##SomeResult'
+                      EXEC sp_executesql
+                        @SQL
+
+
+-- Now return first page
+                      SET @SQL = 'WITH    Query_cte 
+          AS ( SELECT
+                    <Col1>
+                ,   <Col2>
+                ,   <Col3>
+                ,   ROW_NUMBER() OVER ( ORDER BY <Col1> ASC ) AS line --This order by Determines your sort order
+                ,   _LineCount = COUNT(*) OVER ( )
+                FROM
+                    TempDB.dbo.' + @CacheTable + '
+               
+             )
+     SELECT TOP ( @pagesize ) -- Diplay results in outer Query
+            <Col1>
+        ,   <Col2>
+        ,   <Col3>
+        ,   _LineCount
+        ,   ( _LineCount / @pagesize ) _PgCount
+        FROM
+            Query_cte
+        WHERE
+            line > 0
+        ORDER BY line --Must have an order by statement to make TOP Deterministic'
+
+                      EXEC sp_executesql
+                        @SQL                           
+                END
+                
+/********************Return proceeding pages******************************************/
+ 
+             IF @pagenumber > 0
+                BEGIN
+                      SET @SQL = 'WITH    Query_cte 
+          AS ( SELECT
+                    <Col1>
+                ,   <Col2>
+                ,   <Col3>
+                ,   ROW_NUMBER() OVER ( ORDER BY <Col1> ASC ) AS line --This order by Determines your sort order
+                ,   _LineCount = COUNT(*) OVER ( )
+                FROM
+                    TempDB.dbo.' + @CacheTable + '
+               
+             )
+     SELECT TOP ( @pagesize ) -- Diplay results in outer Query
+            <Col1>
+        ,   <Col2>
+        ,   <Col3>
+        ,   _LineCount
+        ,   ( _LineCount / @pagesize ) _PgCount
+        FROM
+            Query_cte
+        WHERE
+            line > (' + @pagenumber + ' - 1 ) * ' + @pagesize
+                          + '
+        ORDER BY line --Must have an order by statement to make TOP Deterministic'
+
+                      EXEC sp_executesql
+                        @SQL                           
+                END
+ 
+ --Drop cache Table after use
+             IF @pagenumber = -1
+                BEGIN
+                      SET @SQL = ' Drop Table TempDB.dbo.' + @CacheTable 
+                      EXEC sp_executesql
+                        @SQL
+                END
+ 
+
+             SET NOCOUNT OFF
+       END
+
+
+

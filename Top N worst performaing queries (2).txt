@@ -1,0 +1,102 @@
+ Everything is mentioned in the code?.But be careful while executing it. This is doing lots of sorts to get the ranking and it is on different columns. Thus it will do lots of sorts and if your system is alredy under pressure this query might add to your perf issue. I would suggest that you start using one of the counter and comment others and then proceed to make sure that it doesnt put the pressure on the system.
+
+Also, this query will work on SQL server 2008 and compability 100 and above.???????
+
+
+
+/*
+You might have seen a number of queries which provides you with top 10 or top 5 worst performing queries either by Logical IO’s or by CPU time or by Elapsed Time.. I have similar query but it does many more thing.
+
+I personally do not query either by total logical reads or total cpu time or total elapsed time individually. I usually use this query to get the queries which are top n on a number of counters like say top 5 by ‘Total Logical Reads’ and top 5 by ‘Total CPU Time’ and top 5 by ‘Total Elapsed Time’ etc. Thus I will be able to find the queries which are performing bad not just on one counter but on a number of counters. Thus I will be able to find “true” worst perforaming query. I used word “true” because sometime a query using more CPU time as it is a parallel query whereas it is not taking too much time to actuall execute query (or the total elapsed time rank is not say even in top 20). However, there is something which is still missing. There are queries which are using the memory grant for sort and hash joins. This value is not included here.However, for such queries CPU time is more and thus these kind of queries might come up in top queries by CPU time.
+
+*/
+with PerformanceMetrics
+as
+(
+select
+--dest.text,
+--statement_start_offset,
+--statement_end_offset,
+--LEN(dest.text) ln,
+substring
+(
+dest.text,
+statement_start_offset/2,
+case when statement_end_offset = -1 then LEN(dest.text)
+else statement_end_offset
+end /2
+) as 'Text of the SQL' ,
+deqs.plan_generation_num as 'Number of times the plan was generated for this SQL',
+execution_count as 'Total Number of Times the SQL was executed',
+DENSE_RANK() over(order by execution_count desc) as 'Rank of the SQL by Total number of Executions',
+total_elapsed_time/1000 as 'Total Elapsed Time in ms consumed by this SQL',
+DENSE_RANK() over(order by total_elapsed_time desc) as 'Rank of the SQL by Total Elapsed Time',
+Max_elapsed_time/1000 as 'Maximum Elapsed Time in ms consumed by this SQL',
+min_elapsed_time/1000 as 'Minimum Elapsed Time in ms consumed by this SQL',
+total_elapsed_time/1000*nullif(execution_count,0) as 'Average Elapsed Time in ms consumed by this SQL',
+DENSE_RANK() over(order by total_elapsed_time/nullif(execution_count,0) desc) as 'Rank of the SQL by Average Elapsed Time',
+total_worker_time as 'Total CPU Time in ms consumed by this SQL',
+DENSE_RANK() over(order by total_worker_time desc) as 'Rank of the SQL by Total CPU Time',
+Max_worker_time as 'Maximum CPU Time in ms consumed by this SQL',
+min_worker_time as 'Minimum CPU Time in ms consumed by this SQL',
+total_worker_time/nullif(execution_count,0) as 'Average CPU Time in ms consumed by this SQL',
+DENSE_RANK() over(order by total_worker_time/nullif(execution_count,0) desc) as 'Rank of the SQL by Average CPU Time',
+total_logical_reads as 'Total Logical Reads Clocked by this SQL',
+DENSE_RANK() over(order by total_logical_reads desc) as 'Rank of the SQL by Total Logical reads',
+Max_logical_reads as 'Maximum Logical Reads Clocked by this SQL',
+min_logical_reads as 'Minimum Logical Reads Clocked by this SQL',
+total_logical_reads/nullif(execution_count,0) as 'Average Logical Reads Clocked by this SQL',
+DENSE_RANK() over(order by total_logical_reads/nullif(execution_count,0) desc) as 'Rank of the SQL by Average Logical reads',
+total_physical_reads as 'Total Physical Reads Clocked by this SQL',
+DENSE_RANK() over(order by total_physical_reads desc) as 'Rank of the SQL by Total Physical Reads',
+Max_physical_reads as 'Maximum Physical Reads Clocked by this SQL',
+min_physical_reads as 'Minimum Physical Reads Clocked by this SQL',
+total_physical_reads/nullif(execution_count,0) as 'Average Physical Reads Clocked by this SQL',
+DENSE_RANK() over(order by total_physical_reads/nullif(execution_count,0) desc) as 'Rank of the SQL by Average Physical Reads',
+total_logical_writes as 'Total Logical Writes Clocked by this SQL',
+DENSE_RANK() over(order by total_logical_writes desc) as 'Rank of the SQL by Total Logical Writes',
+Max_logical_writes as 'Maximum Logical Writes Clocked by this SQL',
+min_logical_writes as 'Minimum Logical Writes Clocked by this SQL',
+total_logical_writes/nullif(execution_count,0) as 'Average Logical Writes Clocked by this SQL',
+DENSE_RANK() over(order by total_logical_writes/nullif(execution_count,0) desc) as 'Rank of the SQL by Average Logical Writes',
+deqp.query_plan as 'Plan of Query'
+--similarly you can add the ranks for maximum values as well.That is quite useful in finding some of the perf issues.
+from
+sys.dm_exec_query_stats deqs
+/*F0C6560A-9AD1-448B-9521-05258EF7E3FA*/ --use a newid so that we could exclude this query from the performanc emetrics output
+outer apply sys.dm_exec_query_plan(deqs.plan_handle) deqp --sometimes the plan might not be in the cache any longer.So using outer apply
+outer apply sys.dm_exec_sql_text(deqs.sql_handle) dest --Sometimes the text is not returned by the dmv so use outer apply.
+where
+dest.text not like '%F0C6560A-9AD1-448B-9521-05258EF7E3FA%'
+)
+select
+*
+from
+PerformanceMetrics
+where
+1=1
+--apply any of these where clause in any combinations or one by one..
+--and [Rank of the SQL by Average CPU Time] <= 20 --Use this to find the top N queries by avg CPU time.
+--and [Rank of the SQL by Average Elapsed Time] <= 20 --Use this to find the top N queries by avg elspsed time.
+--and [Rank of the SQL by Average Logical reads] <= 20 --Use this to find the top N queries by avg logical reads.
+--and [Rank of the SQL by Average Physical Reads] <= 20 --Use this to find the top N queries by avg physical reads.
+and [Rank of the SQL by Total CPU Time] <= 20 --Use this to find the top N queries by total CPU time.
+and [Rank of the SQL by Total Elapsed Time] <= 20 --Use this to find the top N queries by total elapsed time.
+and [Rank of the SQL by Total Logical reads] <= 20 --Use this to find the top N queries by Total Logical reads.
+and [Rank of the SQL by Total Physical Reads] <= 20 --Use this to find the top N queries by Total Physical Reads.
+and [Rank of the SQL by Total number of Executions] <= 20 --Use this to find the top N queries by Total number of Executions.
+--and [Rank of the SQL by Average Logical Writes] <= 20 --Use this to find the top N queries by Average Logical Writes.
+and [Rank of the SQL by Total Logical Writes] <= 20 --Use this to find the top N queries by Total Logical Writes.
+
+--I usually do the query by 6 rank types together Total logical reads,Total CPU time, Total Elapsed Time , Total Execution count ,Total Physical Reads and Total Logical Writes.Sometimes I exclude last two counters if i do not get any query in the output.
+--If some queries are say in top 10 in all these 6 categories then these needs to tune first...
+--But sometime you might not get any rows at all if u use these 6 categiories in that case remove one of these categories or try one by one..
+
+
+ 
+
+
+
+
+
+

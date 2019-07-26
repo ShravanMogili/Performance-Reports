@@ -1,0 +1,23 @@
+Find Most Expensive Stored Procedure (By Execution Count)
+
+ An important step in optimizing a system is to take a holistic approach and look at stored procedures that are called very often. These procedures can often be the backbone of a system. Sometimes optimizing these procedures can have a dramatic effect on relieving the physical bottlenecks of the system and improving end-user experience.
+The following DMV query shows the execution count of each stored procedure, sorted by the most executed procedures first.
+
+
+SELECT DB_NAME(SQTX.DBID) AS [DBNAME]
+	,OBJECT_SCHEMA_NAME(SQTX.OBJECTID, DBID) AS [SCHEMA]
+	,OBJECT_NAME(SQTX.OBJECTID, DBID) AS [STORED PROC]
+	,MAX(CPLAN.USECOUNTS) [EXEC COUNT]
+FROM SYS.DM_EXEC_CACHED_PLANS CPLAN
+CROSS APPLY SYS.DM_EXEC_SQL_TEXT(CPLAN.PLAN_HANDLE) SQTX
+WHERE DB_NAME(SQTX.DBID) IS NOT NULL
+	AND CPLAN.OBJTYPE = 'PROC'
+GROUP BY CPLAN.PLAN_HANDLE
+	,DB_NAME(SQTX.DBID)
+	,OBJECT_SCHEMA_NAME(OBJECTID, SQTX.DBID)
+	,OBJECT_NAME(OBJECTID, SQTX.DBID)
+ORDER BY MAX(CPLAN.USECOUNTS) DESC
+
+
+
+

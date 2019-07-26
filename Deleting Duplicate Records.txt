@@ -1,0 +1,73 @@
+--Deleting Duplicate Records
+
+ Steps to use the script:
+
+1. Create table using the given code
+
+2. Insert duplicate records into the table
+
+3. Select the records that you want to see.
+
+4. Delete duplicate records
+
+
+CREATE TABLE #Employee(
+	Employee_ID [int] Null,
+	Employee_Name varchar(20) Null,
+	Employee_Dept varchar(20) Null 
+) ;
+
+Insert into #Employee VALUES (1, 'Mark Dunn', 'HR');
+Insert into #Employee VALUES (1, 'Mark Dunn', 'HR');
+Insert into #Employee VALUES (2, 'John Ciesel', 'Production');
+Insert into #Employee VALUES (2, 'John Ciesel', 'Production');
+Insert into #Employee VALUES (2, 'John Ciesel', 'Production');
+Insert into #Employee VALUES (3, 'Anna Dolf', 'Manufacturing');
+
+
+-- Selecting Distinct Records
+With CTE_Employee
+AS
+(
+	Select	Employee_ID, Employee_Name, Employee_Dept,
+			ROW_NUMBER()
+				OVER (PARTITION BY Employee_ID, Employee_Name, Employee_Dept
+						ORDER BY Employee_ID, Employee_Name, Employee_Dept) AS RowNumber
+	from	#Employee
+)
+
+SELECT	Employee_ID, Employee_Name, Employee_Dept
+FROM	CTE_Employee
+WHERE	RowNumber = 1;
+
+
+-- Selecting Duplicate Records
+With CTE_Employee
+AS
+(
+	Select	Employee_ID, Employee_Name, Employee_Dept,
+			ROW_NUMBER()
+				OVER (PARTITION BY Employee_ID, Employee_Name, Employee_Dept
+						ORDER BY Employee_ID, Employee_Name, Employee_Dept) AS RowNumber
+	from	#Employee
+)
+
+SELECT	Employee_ID, Employee_Name, Employee_Dept
+FROM	CTE_Employee
+WHERE	RowNumber > 1;
+
+
+-- Deleting Duplicate Records
+With CTE_Employee
+AS
+(
+	Select	Employee_ID, Employee_Name, Employee_Dept,
+			ROW_NUMBER()
+				OVER (PARTITION BY Employee_ID, Employee_Name, Employee_Dept
+						ORDER BY Employee_ID, Employee_Name, Employee_Dept) AS RowNumber
+	from	#Employee
+)
+
+DELETE
+FROM	CTE_Employee
+WHERE	RowNumber > 1;

@@ -1,0 +1,116 @@
+ This code is created as a stored procedure, which is saved in a DBA maintenance database. Create a SQL Agent job that executes this proc daily, weekly, or monthly (DBA's choice) for automatic notifications. When the report is received, review the report for any database roles that can be removed from the server\instance.
+
+The intention of this script is to assist with security maintenance and server cleanup. Deprecated database roles never need clog up the instance again.
+
+
+CREATE PROCEDURE [dbo].[spDQ_UnusedDatabaseRoles] 
+@emails VARCHAR(255) = NULL 
+AS 
+
+/*-------------------------------------------------------------------------------------------------------
+ 
+DESCRIPTION: This is a Data Quality proc created to list all user-created database roles that do not
+currently have a login mapped to them. 
+-------------------------------------------------------------------------------------------------------*/
+
+SET NOCOUNT ON;
+
+--check if temp table exists and drop
+IF (SELECT Object_ID('tempdb..#Databases') ) IS NOT NULL
+DROP TABLE #Databases;
+-- create table and load db names
+
+IF (SELECT Object_ID('tempdb..##UnusedDatabaseRoles') ) IS NOT NULL
+DROP TABLE ##UnusedDatabaseRoles;
+
+CREATE TABLE #Databases (DatabaseID INT IDENTITY(1,1) PRIMARY KEY NONCLUSTERED, DBName VARCHAR(50));
+
+INSERT INTO #Databases (DBname)
+SELECT [Name] AS DBname
+FROM MASTER.sys.databases
+WHERE [Name] NOT IN ('model', 'tempdb') 
+AND source_Database_ID IS NULL;
+--Do not check Model or TempDB databases, and ignore all snapshots
+
+CREATE TABLE ##UnusedDatabaseRoles (DBName VARCHAR(50), RoleName VARCHAR(50));
+
+-- declare/init vars
+DECLARE @LoopCounter int, @DBName varCHAR(100), @sqlstmt varCHAR(5000);
+SET @LoopCounter = 1;
+
+
+WHILE @LoopCounter <= (SELECT COUNT(DBname) FROM #Databases)
+ BEGIN
+
+-- change to new db
+SELECT @DBName = DBname FROM #Databases
+WHERE DatabaseID = @LoopCounter;
+
+SET @sqlstmt = 'USE ['+@DBName+'];' + CHAR(10); 
+
+--db role menbership
+SET @sqlstmt = @sqlstmt + CHAR(10) 
+???? + 'INSERT INTO ##UnusedDatabaseRoles (DBName, RoleName)
+???? SELECT DISTINCT ''' + @DBName + ''', RP.Name
+???? FROM sys.database_principals RP 
+???? LEFT OUTER JOIN sys.database_role_members R
+???? ON RP.principal_id = R.role_principal_id
+???? WHERE RP.Type_Desc = ''DATABASE_ROLE'' AND R.role_principal_id IS NULL
+???? AND RP.is_fixed_role = 0 AND RP.principal_id > 0
+???? AND RP.Name NOT IN (''db_dtsadmin'',''db_dtsltduser'',''db_dtsoperator'')';
+--This last line allows the DBA to skip any system database level roles that will never have users mapped to them
+
+--PRINT @sqlstmt; --debug syntax
+EXECUTE (@sqlstmt);
+
+SET @LoopCounter = @LoopCounter + 1;
+
+ END;
+ 
+ 
+DECLARE @profile VARCHAR(50), @dsql VARCHAR(2000), @filename VARCHAR(50), @rwcnt INT = 0; 
+ 
+IF (@emails IS NULL) 
+BEGIN 
+ SET @emails='DBAeMail@myCompany.com';
+END;
+ 
+SELECT @profile = CASE @@SERVERNAME WHEN 'Dev' THEN 'MyCompany_Dev@MyCompany.com'
+????WHEN 'Test' THEN 'MyCompany_Test@MyCompany.com'
+????WHEN 'QC' THEN 'MyCompany_QC@MyCompany.com'
+????WHEN 'Prod' THEN 'MyCompany@MyCompany.com' END; 
+--Sets the DB Mail profile for a multiple Instance environment.
+--The CASE statement is not needed for Single Server / Environment setups or single (default) profile setups
+ 
+SET @filename = 'UnusedDatabaseRoles_' + LEFT(CONVERT(VARCHAR(20),GETDATE(),112),8) + '.txt';
+
+SELECT @rwcnt = COUNT(RoleName)
+ FROM ##UnusedDatabaseRoles;
+ 
+IF (@rwcnt>0) 
+BEGIN 
+ 
+ SET @dSQL='SET NOCOUNT ON;
+SELECT DBName, RoleName 
+FROM ##UnusedDatabaseRoles;
+SET NOCOUNT OFF;';
+
+ EXEC msdb.dbo.sp_send_dbmail 
+ @profile_name = @profile, 
+ @recipients = @emails, 
+ @query = @dsql, 
+ @subject = 'Weekly DQ Report of Unused Database Roles', 
+ @body = 'The Database Roles in the below file are not being used by any login. Please that these roles are still required. This is an automated email. Do NOT directly respond or reply. 
+ 
+If you have any questions, please contact the DBA team at DBAeMail@MyCompany.com.',
+ @attach_query_result_as_file = 1, 
+ @query_attachment_filename =@filename;
+ 
+END;
+
+
+
+
+
+
+

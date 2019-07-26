@@ -1,0 +1,31 @@
+This script will update statistics on all user databases. The script can be created as a job from SQL Server Agent. 
+
+
+
+
+create table #TempTbl (DBName varchar(50), Process int default 0)
+
+insert into #TempTbl (DBName) select name from master..sysdatabases where dbid not in(1,2,3,4)
+
+declare @sDbname varchar(50)
+
+ while exists (select 'x' from #TempTbl where Process = 0)
+
+begin
+
+   select top 1 @sDbname = DBName from #TempTbl where Process = 0
+
+
+   exec ('USE  ' +  '[' + @sDbname + ']  EXEC sp_updatestats') 
+
+   update #TempTbl 
+
+   set    Process = 1
+
+   where  DBName = @sDbname   
+
+end
+
+ 
+
+drop table #TempTbl

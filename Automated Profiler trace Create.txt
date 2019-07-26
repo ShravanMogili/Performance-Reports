@@ -1,0 +1,336 @@
+Automated Profiler trace Create
+
+This stored procedure is created to be invoked (in my case by SQL Server scheduled job), and will then create a tracefile to a specified file location (ensure that if this is NOT local, your SQL Server Agent runs on a domain account that has access to that drive. The Stored procedure will create files of a certain size (specified via parameter), so that you can get several files, which I added to ease to file copying burden.
+
+The code is documented moderately, and can be used as a template, upon which you can base and enhance to include/exclude your favourite events and filters.
+
+Plerase feel free to respond with improvements, etc. And look for related scripts that automatically import the tracefiles into a database.
+
+((Plese note, I have tested this and have run it on my production systems, but as always, any script you get should be carefully tested and understood before it goes enar any critial environment. No warranty etc. impied :0 )) 
+
+
+
+if exists (select 1 from sysobjects where name = 'Up_Auto_Profiler_Perf')
+	drop procedure Up_Auto_Profiler_Perf
+go
+
+create procedure Up_Auto_Profiler_Perf 
+	@TraceFile 		nvarchar(128),	--Nvarchar as required by SP_CREATE_TRACE. The File to be created.
+	@StopTime 		datetime,	--The time to stop the trace.
+	@MaxSize 		BigInt = 10,	--BigInt as required by SP_CREATE_TRACE. The maximum size per file.
+	@DurationFilterValue	BIGINT, 	--The duration to filter on (in ms).
+	@TraceID int OUTPUT
+
+--	Create By:	Regan Galbraith
+--	Create On:	2004-12-28
+--	Purpose:	
+--		This stored procedure was written to facilitate the creation of profiler traces that write to files.
+--		
+--	Example:
+--		exec Up_Auto_Profiler_Perf 'C:\TraceFiles\AutoProf_SP_20041228_1000',
+--						'2004-12-28-10:05:00.000',100,500,@traceid
+--
+--	Possible future additions:
+--		1> 	simple enhancement to specify DB to store data, and table.
+--		2>	accepting a parameter instead of apply the default .trc. Use the .trc as default
+--		3>	implementing default value's for dir's, so that it can run without parm's ... good or bad?
+--		4>	accepting a parameter to determine whether to do file rollover - see @option below
+--
+--	Change Control:	version 1 - 	Regan Galbraith 2004-12-28
+--					Creation and adding of comment
+--			version 1.2 - 	Regan Galbraith 2004-12-29
+--					Added @DurationFilterValue logic to allow generation of limited data, 
+--					filtering on duration
+--					Added Output parametre @TracId to return for lookup on trace.	
+--			version 1.3 - 	Regan Galbraith 2005-01-03
+--					Fixed the problems with applying trace filters by correcting error checking to 
+--					use return code, and by moving start trace to end, sicne filters cannot apply
+--					to running trace.
+--
+
+
+AS
+set nocount on
+--Declare Control Variable
+declare @ReturnCode 		Int
+
+--Declare Option Variables   
+declare @Option 		int
+declare @EventId 		int
+declare @On 			bit
+
+declare @Value 			int
+declare @ComparisonOperator 	int
+declare @ColumnId 		int
+declare @LogicalOperator 	int
+
+--Set Option Variable
+set @Option = 2			--TraceFileRollOver 
+--Specifies that when the max_file_size is reached, the current trace file is closed and a new file is created.
+
+--Set Trace Filter to exclude System Ids - that is ObjectId > 100
+set @Value = 100  	
+set @ColumnId = 22		--0bjectid
+set @LogicalOperator = 0	--and (1 = OR)
+set @ComparisonOperator = 2	--Greater than
+
+--Set Control Variables
+set @ReturnCode = 0		--No Error
+set @On = 1			--True
+
+--Create a trace, retrieve @TraceId 
+exec @ReturnCode=sp_trace_create @TraceId output,@Option,@TraceFile,@MaxSize,@StopTime
+if @ReturnCode <> 0
+	Begin
+	if @ReturnCode = 1
+		Print 'Error 1 - Unknown error.'
+	if @ReturnCode = 10
+		Print 'Error 10 - Invalid options. Returned when options specified are incompatible.'
+	if @ReturnCode = 12
+		Print 'Error 12 - Cannot create tracefile - check if file already exists, or this trace already running'
+	if @ReturnCode = 13
+		Print 'Error 13 - Out of memory. Returned when there is not enough memory to perform the specified action.'
+	if @ReturnCode = 14
+		Print 'Error 14 - Invalid stop time. Returned when the stop time specified has already happened.'
+	if @ReturnCode = 15
+		Print 'Error 15 - Invalid parameters. Returned when the user supplied incompatible parameters.'
+	else
+		Print 'Unexpected and Unknown error In creating trace - Please review'
+	Goto ErrorHandler
+End
+--Populate Trace with Events
+--SECTION CURSORS
+-- this set is : cursor execute
+set @EventId = 74
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+exec sp_trace_setevent @TraceId,@EventId,25,@On	--IntegerData
+
+-- this set is : Cursor Open
+set @EventId = 53
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+exec sp_trace_setevent @TraceId,@EventId,25,@On	--IntegerData
+
+-- this set is : Cursor Recompile
+set @EventId = 75
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+
+--SECTION ERRORS AND WARNINGS
+-- this set is : MissingJoinPredicate
+set @EventId = 80
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+
+--SECTION LOCKS 
+-- this set is : Lock:DeadLock
+set @EventId = 25
+exec sp_trace_setevent @TraceId,@EventId,2,@On	--BinaryData
+exec sp_trace_setevent @TraceId,@EventId,13,@On	--duration
+exec sp_trace_setevent @TraceId,@EventId,15,@On	--EndTime
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+exec sp_trace_setevent @TraceId,@EventId,24,@On	--indexID
+exec sp_trace_setevent @TraceId,@EventId,25,@On	--IntegerData
+exec sp_trace_setevent @TraceId,@EventId,32,@On	--Mode
+exec sp_trace_setevent @TraceId,@EventId,22,@On	--ObjectID
+
+-- this set is : Lock:DeadLockChain
+set @EventId = 59
+exec sp_trace_setevent @TraceId,@EventId,2,@On	--BinaryData
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+exec sp_trace_setevent @TraceId,@EventId,24,@On	--indexID
+exec sp_trace_setevent @TraceId,@EventId,25,@On	--IntegerData
+exec sp_trace_setevent @TraceId,@EventId,32,@On	--Mode
+exec sp_trace_setevent @TraceId,@EventId,22,@On	--ObjectID
+
+-- this set is : Lock:Timeout
+set @EventId = 27
+exec sp_trace_setevent @TraceId,@EventId,2,@On	--BinaryData
+exec sp_trace_setevent @TraceId,@EventId,13,@On	--duration
+exec sp_trace_setevent @TraceId,@EventId,15,@On	--EndTime
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+exec sp_trace_setevent @TraceId,@EventId,24,@On	--indexID
+exec sp_trace_setevent @TraceId,@EventId,32,@On	--Mode
+exec sp_trace_setevent @TraceId,@EventId,22,@On	--ObjectID
+
+--SECTION PERFORMANCE
+-- this set is : Execution Plan
+set @EventId = 68
+exec sp_trace_setevent @TraceId,@EventId,2,@On	--BinaryData
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+exec sp_trace_setevent @TraceId,@EventId,25,@On	--IntegerData
+exec sp_trace_setevent @TraceId,@EventId,22,@On	--ObjectID
+exec sp_trace_setevent @TraceId,@EventId,1,@On	--TextData
+
+-- this set is : Show Plan
+-- set @EventId = 97
+-- exec sp_trace_setevent @TraceId,@EventId,2,@On	--BinaryData
+-- exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+-- exec sp_trace_setevent @TraceId,@EventId,25,@On	--IntegerData
+-- exec sp_trace_setevent @TraceId,@EventId,1,@On	--TextData
+
+-- --this set is : Show Plan Statistics
+-- set @EventId = 98
+-- exec sp_trace_setevent @TraceId,@EventId,2,@On	--BinaryData
+-- exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+-- exec sp_trace_setevent @TraceId,@EventId,25,@On	--IntegerData
+-- exec sp_trace_setevent @TraceId,@EventId,1,@On	--TextData
+-- 
+-- --this set is : Show Plan Text
+-- set @EventId = 96
+-- exec sp_trace_setevent @TraceId,@EventId,2,@On	--BinaryData
+-- exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+-- exec sp_trace_setevent @TraceId,@EventId,25,@On	--IntegerData
+-- exec sp_trace_setevent @TraceId,@EventId,1,@On	--TextData
+
+--SECTION STORED PROCEDURES
+--this set is SP:Recompile
+set @EventId = 37
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+exec sp_trace_setevent @TraceId,@EventId,29,@On	--NestLevel
+exec sp_trace_setevent @TraceId,@EventId,22,@On	--ObjectID
+exec sp_trace_setevent @TraceId,@EventId,34,@On	--ObjectName
+exec sp_trace_setevent @TraceId,@EventId,1,@On	--TextData
+--this set is SP:RPC:Completed
+set @EventId = 10
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+exec sp_trace_setevent @TraceId,@EventId,13,@On	--duration
+exec sp_trace_setevent @TraceId,@EventId,18,@On	--cpu
+exec sp_trace_setevent @TraceId,@EventId,15,@On	--EndTime
+exec sp_trace_setevent @TraceId,@EventId,16,@On	--Reads
+exec sp_trace_setevent @TraceId,@EventId,1,@On	--TextData
+exec sp_trace_setevent @TraceId,@EventId,17,@On	--Writes
+
+--SECTION TRANSACTIONS
+--this set is : SQL Transaction
+-- set @EventId = 50
+-- exec sp_trace_setevent @TraceId,@EventId,13,@On	--duration
+-- exec sp_trace_setevent @TraceId,@EventId,15,@On	--EndTime
+-- exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+-- exec sp_trace_setevent @TraceId,@EventId,21,@On	--EventSubClass
+-- exec sp_trace_setevent @TraceId,@EventId,34,@On	--ObjectName
+-- exec sp_trace_setevent @TraceId,@EventId,1,@On	--TextData
+-- exec sp_trace_setevent @TraceId,@EventId,4,@On	--TRansactionID
+
+--SECTION TSQL
+
+--this set is : SQL BatchCompleted
+set @EventId = 12
+exec sp_trace_setevent @TraceId,@EventId,18,@On	--cpu
+exec sp_trace_setevent @TraceId,@EventId,13,@On	--duration
+exec sp_trace_setevent @TraceId,@EventId,15,@On	--EndTime
+exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+exec sp_trace_setevent @TraceId,@EventId,16,@On	--Reads
+exec sp_trace_setevent @TraceId,@EventId,1,@On	--TextData
+exec sp_trace_setevent @TraceId,@EventId,17,@On	--Writes
+
+-- --this set is : SQL:StmtCompleted
+-- set @EventId = 41
+-- exec sp_trace_setevent @TraceId,@EventId,18,@On	--cpu
+-- exec sp_trace_setevent @TraceId,@EventId,13,@On	--duration
+-- exec sp_trace_setevent @TraceId,@EventId,15,@On	--EndTime
+-- exec sp_trace_setevent @TraceId,@EventId,27,@On	--EventClass
+-- exec sp_trace_setevent @TraceId,@EventId,25,@On	--IntegerData
+-- exec sp_trace_setevent @TraceId,@EventId,29,@On	--NestLevel
+-- exec sp_trace_setevent @TraceId,@EventId,22,@On	--ObjectID
+-- exec sp_trace_setevent @TraceId,@EventId,16,@On	--Reads
+-- exec sp_trace_setevent @TraceId,@EventId,1,@On	--TextData
+-- exec sp_trace_setevent @TraceId,@EventId,17,@On	--Writes
+
+--Add a trace filter to exclude System Ids - that is ObjectId > 100
+exec @ReturnCode=sp_trace_setfilter @TraceId,@ColumnId,@LogicalOperator,@ComparisonOperator,@Value
+if @ReturnCode <> 0
+	Begin
+	if @ReturnCode = 1
+		print 'ERROR 1 - Unknown error.'
+	else
+	if @ReturnCode = 2
+		Print 'ERROR 2 - The trace is currently running. Changing the trace at this time will result in an error.'
+	else
+	if @ReturnCode = 4
+		Print 'ERROR 4 - The specified Column is not valid.'
+	else
+	if @ReturnCode = 5
+		print 'ERROR 5 - The specified Column is not allowed for filtering.'
+	else
+	if @ReturnCode = 6
+		print 'ERROR 6 - The specified Comparison Operator is not valid. '
+	else
+	if @ReturnCode = 7
+		print 'ERROR 7 - The specified Logical Operator is not valid.'
+	else
+	if @ReturnCode = 9
+		print 'ERROR 9 - The specified Trace Handle is not valid.'
+	else
+	if @ReturnCode = 13
+		print 'ERROR 13 - Out of memory. Returned when there is not enough memory to perform the specified action.'
+	else
+	if @ReturnCode = 16
+		print 'ERROR 16 - The function is not valid for this trace.'
+	else
+		Print 'ERROR x - Unknown Error'
+	GoTo ErrorHandler
+end
+if @DurationFilterValue <> 0 
+	begin
+	set @columnId = 13 		--Duration
+	set @ComparisonOperator = 4 	--Greater than or equal to
+	--Add trace for Trace being create (@TraceID, on column Duration, Greater than Equal to, @DurationFilterValue)
+	exec @ReturnCode=sp_trace_setfilter @TraceId,@ColumnId,@LogicalOperator,@ComparisonOperator,@DurationFilterValue
+	if @ReturnCode <> 0
+		Begin
+		if @ReturnCode = 1
+			print 'ERROR 1 - Unknown error.'
+		else
+		if @ReturnCode = 2
+			Print 'ERROR 2 - The trace is currently running. Changing the trace at this time will result in an error.'
+		else
+		if @ReturnCode = 4
+			Print 'ERROR 4 - The specified Column is not valid.'
+		else
+		if @ReturnCode = 5
+			print 'ERROR 5 - The specified Column is not allowed for filtering.'
+		else
+		if @ReturnCode = 6
+			print 'ERROR 6 - The specified Comparison Operator is not valid. '
+		else
+		if @ReturnCode = 7
+			print 'ERROR 7 - The specified Logical Operator is not valid.'
+		else
+		if @ReturnCode = 9
+			print 'ERROR 9 - The specified Trace Handle is not valid.'
+		else
+		if @ReturnCode = 13
+			print 'ERROR 13 - Out of memory. Returned when there is not enough memory to perform the specified action.'
+		else
+		if @ReturnCode = 16
+			print 'ERROR 16 - The function is not valid for this trace.'
+		else
+			Print 'ERROR x - Unknown Error'
+		GoTo ErrorHandler
+	end
+end
+--Some information on the trace
+SELECT * FROM ::fn_trace_getfilterinfo(@TraceID)
+SELECT * FROM ::fn_trace_getinfo(@TraceID)
+Print 'Start Trace'
+exec @ReturnCode=sp_trace_setstatus @TraceId,1
+if @ReturnCode <> 0
+	Begin
+	if @ReturnCode = 13
+		Print 'ERROR 13 - Out of memory. Returned when there is not enough memory to perform the specified action.'
+	else
+		if @ReturnCode = 9
+			Print 'ERROR 9 - The specified Trace Handle is not valid.'
+		else
+			if @ReturnCode = 8
+				print 'ERROR 8 - The specified Status is not valid.'
+	else
+		Print 'ERROR 1 - Unknown Error'
+	GoTo ErrorHandler
+end
+
+ErrorHandler:
+Return @ReturnCode
+
+
+
+
+

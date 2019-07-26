@@ -1,0 +1,123 @@
+This SP will monitor Log space for SQL Server.
+
+ 
+
+Syntax:
+
+dbo.logspace_monitor 80 --Threshold value is optional, default value is 70%
+
+ 
+
+It will also gives details about further steps that needs to taken to bring down log space to NORMAL level.
+
+/*
+
+ 
+
+This SP will monitor Log space for SQL Server.
+
+ 
+
+Syntax:
+
+dbo.logspace_monitor 80 --Threshold value is
+optional, default value is 70%
+
+ 
+
+It will also gives details about further steps that
+needs to taken to bring down log space to NORMAL
+level
+
+ 
+
+Keep result to text when executing this SP
+
+ 
+
+mail me at :-)
+
+mailtovinayaka@gmail.com
+
+ 
+
+*/
+
+ 
+
+IF OBJECT_ID('dbo.logspace_monitor', 'P')
+IS NOT NULL
+
+
+DROP PROCEDURE dbo.logspace_monitor
+
+GO
+
+ 
+
+CREATE PROCEDURE logspace_monitor
+
+      @threshold
+int = 70
+
+AS
+
+ 
+
+SET NOCOUNT ON
+
+CREATE TABLE #logSpaceStats 
+
+( 
+
+databaseName
+sysname, 
+
+logSize
+decimal(18,5),
+
+
+logUsed
+decimal(18,5),
+
+staus
+int
+
+) 
+
+ 
+
+declare @cmd nvarchar(max)
+
+set @cmd = 'dbcc
+sqlperf(logspace) with no_infomsgs'
+
+ 
+
+insert into #logSpaceStats exec sp_executesql @cmd
+
+PRINT '*********************************************'
+
+PRINT 'DATABASES with logspace used greated than 70%'
+
+PRINT '*********************************************'
+
+PRINT ''
+
+ 
+
+select 
+
+cast(DatabaseName as varchar(25))as 'DATABASE NAME',
+
+cast(logused as varchar(20))as
+'LOG SPACE USED',
+
+cast(a.log_reuse_wait_desc as varchar(15)) as
+'LOG REUSE WAIT'
+
+from #logSpaceStats,sys.databases a where databasename=a.name and logUsed >@threshold
+
+ 
+
+go
